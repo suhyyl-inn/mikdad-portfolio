@@ -87,6 +87,29 @@
       }, { threshold: 0.45 })
     : null;
 
+  // Start downloading a frame's preview only when it is close to the screen,
+  // so the page doesn't try to load every video at once.
+  var warmObserver = "IntersectionObserver" in window
+    ? new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          var v = entry.target;
+          warmObserver.unobserve(v);
+          v.preload = "auto";
+          v.src = v.dataset.src;
+          v.load();
+          if (v._visible && !lightbox.open) v.play().catch(function () {});
+        });
+      }, { rootMargin: "500px 0px" })
+    : null;
+
+  // Small, silent preview used inside the frame; the full video (with sound)
+  // plays when the frame is clicked. "videos/x.mp4" -> "videos/preview/x.mp4".
+  function previewFor(url) {
+    var m = url.match(/^(videos\/)([^/]+\.(mp4|webm|mov|m4v))$/i);
+    return m ? m[1] + "preview/" + m[2] : url;
+  }
+
   document.querySelectorAll(".frame[data-slot]").forEach(function (frame) {
     var slot = frame.dataset.slot;
     var poster = "assets/" + slot + ".jpg";
@@ -114,17 +137,29 @@
     var inline = null;
     if (source.type === "file" && playObserver && !reduceMotion) {
       inline = document.createElement("video");
-      inline.src = source.url;
+      inline.dataset.src = previewFor(source.url);
       inline.muted = true;
+      inline.defaultMuted = true;
+      inline.setAttribute("muted", "");
       inline.loop = true;
       inline.playsInline = true;
-      inline.preload = "metadata";
+      inline.preload = "none";
       inline.poster = poster;
       inline.setAttribute("aria-hidden", "true");
       inline.addEventListener("playing", function () { frame.classList.add("is-playing"); });
-      inline.addEventListener("error", function () { frame.classList.remove("is-playing"); });
+      inline.addEventListener("error", function () {
+        frame.classList.remove("is-playing");
+        // No preview file? Fall back to the full video once.
+        if (inline.dataset.src !== source.url) {
+          inline.dataset.src = source.url;
+          inline.src = source.url;
+          inline.load();
+          if (inline._visible) inline.play().catch(function () {});
+        }
+      });
       frame.appendChild(inline);
       inlineVideos.push(inline);
+      warmObserver.observe(inline);
       playObserver.observe(inline);
     }
 
